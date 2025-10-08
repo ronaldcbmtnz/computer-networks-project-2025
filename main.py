@@ -102,6 +102,8 @@ def main():
                         print("No se han descubierto otros usuarios.")
                     else:
                         print("Usuarios descubiertos:")
+
+        
                         # Muestra los usuarios con un ID numérico para facilitar su uso.
                         for i, mac_bytes in enumerate(app_state['known_hosts'].keys()):
                             print(f"  {i}: {mac_bits_cadena(mac_bytes)}")
@@ -110,44 +112,49 @@ def main():
             elif message.startswith('/msg'):
                 parts = message.split(' ', 2)
                 if len(parts) < 3:
-                    print("Uso incorrecto. Ejemplo: /msg 0 Hola que tal")
+                    print("Uso incorrecto. Ejemplo: /msg 00:1a:2b:3c:4d:5e Hola")
                     continue
                 try:
-                    user_id = int(parts[1])
+                    # El segundo argumento ahora es la MAC, no el ID.
+                    dest_mac_str = parts[1]
+                    dest_mac_bytes = mac_cadena_bits(dest_mac_str)
+                    
+                    # Verificamos que conocemos esa MAC
                     with app_state['known_hosts_lock']:
-                        hosts_list = list(app_state['known_hosts'].keys())
-                        if 0 <= user_id < len(hosts_list):
-                            # Obtiene la MAC del destinatario a partir del ID.
-                            dest_mac_bytes = hosts_list[user_id]
-                            # Prepara el payload con el mensaje.
-                            payload = MSG_TYPE_CHAT + parts[2].encode('utf-8')
-                        else:
-                            print("ID de usuario inválido.")
+                        if dest_mac_bytes not in app_state['known_hosts']:
+                            print("Error: MAC de destino desconocida. Usa /list para ver los usuarios.")
                             continue
-                except ValueError:
-                    print("ID de usuario debe ser un número.")
+                    
+                    # Prepara el payload con el mensaje.
+                    payload = MSG_TYPE_CHAT + parts[2].encode('utf-8')
+                except Exception:
+                    print("Error: Formato de MAC inválido.")
                     continue
             
             elif message.startswith('/send'):
                 parts = message.split(' ', 2)
                 if len(parts) < 3:
-                    print("Uso incorrecto. Ejemplo: /send 0 /ruta/a/archivo.txt")
+                    print("Uso incorrecto. Ejemplo: /send 00:1a:2b:3c:4d:5e /ruta/a/archivo.txt")
                     continue
                 try:
-                    user_id = int(parts[1])
+                    # El segundo argumento ahora es la MAC, no el ID.
+                    dest_mac_str = parts[1]
+                    dest_mac_bytes = mac_cadena_bits(dest_mac_str)
                     file_path = parts[2]
                     
                     if not os.path.exists(file_path):
                         print(f"Error: El archivo '{file_path}' no existe.")
                         continue
 
+                    # Verificamos que conocemos esa MAC
                     with app_state['known_hosts_lock']:
-                        hosts_list = list(app_state['known_hosts'].keys())
-                        if not (0 <= user_id < len(hosts_list)):
-                            print("ID de usuario inválido.")
+                        if dest_mac_bytes not in app_state['known_hosts']:
+                            print("Error: MAC de destino desconocida. Usa /list para ver los usuarios.")
                             continue
-                        dest_mac_bytes = hosts_list[user_id]
                     
+                    # --- Envío de la solicitud FILE_START ---
+                    file_size = os.path.getsize(file_path)
+
                     # --- Envío de la solicitud FILE_START ---
                     file_size = os.path.getsize(file_path)
                     file_name = os.path.basename(file_path)

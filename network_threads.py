@@ -58,7 +58,11 @@ def receive_thread(sock, my_mac, state):
             elif msg_type == MSG_TYPE_FILE_START:
                 # Desempaqueta el tamaño del archivo (8 bytes, long long) y el nombre.
                 file_size = struct.unpack('!Q', msg_data[:8])[0]
-                file_name = msg_data[8:].decode('utf-8')
+                
+                # Decodifica el nombre del archivo y elimina cualquier byte nulo al final.
+                file_name_bytes = msg_data[8:].strip(b'\x00')
+                file_name = file_name_bytes.decode('utf-8')
+                
                 sender_alias = state['known_hosts'].get(src_mac, mac_bits_cadena(src_mac))
                 
                 # Guarda la solicitud en la lista de pendientes para que el usuario pueda aceptarla.

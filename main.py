@@ -105,9 +105,10 @@ def main():
 
         
                         # Muestra los usuarios con un ID numérico para facilitar su uso.
-                        for i, mac_bytes in enumerate(app_state['known_hosts'].keys()):
-                            print(f"  {i}: {mac_bits_cadena(mac_bytes)}")
+                        for mac_bytes in app_state['known_hosts'].keys():
+                            print(f"  - {mac_bits_cadena(mac_bytes)}")
                 continue # Vuelve al inicio del bucle sin enviar ningún paquete.
+
 
             elif message.startswith('/msg'):
                 parts = message.split(' ', 2)

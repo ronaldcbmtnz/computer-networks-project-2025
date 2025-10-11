@@ -5,13 +5,14 @@ import os
 from config import *
 from utils import mac_bits_cadena
 
-def receive_thread(sock, my_mac, state):
+def receive_thread(sock, my_mac, state, custom_handler=None):
     """
     Hilo que escucha continuamente paquetes entrantes y los procesa.
     Args:
         sock (socket): El socket RAW en el que escuchar.
         my_mac (bytes): La dirección MAC de este host para ignorar sus propios paquetes.
         state (dict): El diccionario de estado compartido de la aplicación.
+        custom_handler (callable, optional): Función personalizada para manejar mensajes.
     """
     while True:
         try:
@@ -31,6 +32,11 @@ def receive_thread(sock, my_mac, state):
             msg_type = payload[:1]
             # El resto son los datos del mensaje.
             msg_data = payload[1:]
+
+            # Si hay un manejador personalizado, delega el procesamiento.
+            if custom_handler:
+                custom_handler(src_mac, msg_type, payload)
+                continue
 
             # --- Lógica de Descubrimiento Pasivo ---
             # Usamos un lock para acceder de forma segura al diccionario compartido 'known_hosts'.

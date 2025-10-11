@@ -2,6 +2,7 @@ import socket
 import struct
 import time
 import os
+import shutil  # <-- AÑADE ESTA IMPORTACIÓN
 from config import *
 from utils import mac_bits_cadena
 
@@ -107,25 +108,37 @@ def receive_thread(sock, my_mac, state):
                         print(f"\rRecibiendo '{transfer['file_name']}': {progress:.2f}% completado.", end="", flush=True)
 
             elif msg_type == MSG_TYPE_FILE_END:
-                # El emisor nos notifica que ha terminado de enviar trozos.
                 with state['file_transfer_lock']:
-                    if src_mac in state['file_transfer_state'] and state['file_transfer_state'][src_mac].get("status") == "receiving":
+                    if src_mac in state['file_transfer_state']:
                         transfer = state['file_transfer_state'][src_mac]
                         # Cierra el manejador del archivo.
-                        transfer["file_handle"].close()
+                        transfer['file_handle'].close()
                         
-                        print(f"\r\n[*] Transferencia de '{transfer['file_name']}' finalizada.")
-                        print(f"[*] Archivo guardado como 'recibido_{transfer['file_name']}'.")
-                        print("> ", end='', flush=True)
-                        # Limpia el estado de esta transferencia.
+                        final_file_path = f"recibido_{transfer['file_name']}"
+                        print(f"\r\n[+] Transferencia de '{transfer['file_name']}' completada.")
+                        
+                        # --- LÓGICA PARA DESCOMPRIMIR ---
+                        if final_file_path.endswith('.zip'):
+                            print(f"El archivo es un zip. Descomprimiendo...")
+                            try:
+                                # Extrae el contenido en una carpeta con el mismo nombre (sin .zip).
+                                extract_dir = final_file_path[:-4]
+                                shutil.unpack_archive(final_file_path, extract_dir)
+                                print(f"Carpeta extraída en: '{extract_dir}'")
+                                # Borra el archivo zip después de extraerlo.
+                                os.remove(final_file_path)
+                            except Exception as e:
+                                print(f"Error al descomprimir: {e}")
+
                         del state['file_transfer_state'][src_mac]
+                print("> ", end='', flush=True)
             
         except Exception as e:
             # En caso de un error grave, se imprime y el hilo termina.
             print(f"\nError en el hilo de recepción: {e}")
             break
 
-def file_sender_thread(sock, my_mac, dest_mac_bytes, file_path, state):
+def file_sender_thread(sock, my_mac, dest_mac_bytes, file_path, state, is_temp_zip=False):
     """
     Hilo dedicado para enviar un archivo, gestionando la espera del ACK y el envío por trozos.
     """
@@ -179,9 +192,15 @@ def file_sender_thread(sock, my_mac, dest_mac_bytes, file_path, state):
         print("> ", end='', flush=True)
 
     except Exception as e:
-        print(f"\nError en el hilo de envío de archivo: {e}")
+        print(f"\r\nError durante el envío del archivo: {e}")
     finally:
-        # Asegura que el estado de la transferencia se limpie, incluso si hay un error.
+        # --- 4. LIMPIEZA ---
+        # Si el archivo enviado era un zip temporal, lo borramos.
+        if is_temp_zip and os.path.exists(file_path):
+            os.remove(file_path)
+            print(f"Archivo temporal '{file_path}' eliminado.")
+        
+        # Elimina la entrada de transferencia del estado de la aplicación.
         with state['file_transfer_lock']:
             if dest_mac_bytes in state['file_transfer_state']:
                 del state['file_transfer_state'][dest_mac_bytes]        

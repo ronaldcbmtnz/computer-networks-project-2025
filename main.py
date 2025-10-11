@@ -3,6 +3,7 @@ import sys
 import struct
 import threading
 import os
+import shutil
 from config import *
 from utils import obtener_direccion_mac, mac_bits_cadena, mac_cadena_bits
 from network_threads import receive_thread, discovery_thread, file_sender_thread
@@ -135,27 +136,40 @@ def main():
             elif message.startswith('/send'):
                 parts = message.split(' ', 2)
                 if len(parts) < 3:
-                    print("Uso incorrecto. Ejemplo: /send 00:1a:2b:3c:4d:5e /ruta/a/archivo.txt")
+                    print("Uso incorrecto. Ejemplo: /send <mac> /ruta/a/archivo_o_carpeta")
                     continue
                 try:
-                    # El segundo argumento ahora es la MAC, no el ID.
                     dest_mac_str = parts[1]
                     dest_mac_bytes = mac_cadena_bits(dest_mac_str)
-                    file_path = parts[2]
+                    path_to_send = parts[2]
                     
-                    if not os.path.exists(file_path):
-                        print(f"Error: El archivo '{file_path}' no existe.")
+                    if not os.path.exists(path_to_send):
+                        print(f"Error: La ruta '{path_to_send}' no existe.")
                         continue
+
+                    # --- 2. LÓGICA PARA MANEJAR CARPETAS ---
+                    is_temp_zip = False
+                    if os.path.isdir(path_to_send):
+                        print(f"La ruta es una carpeta. Comprimiendo en un archivo zip...")
+                        # Creamos un nombre para el archivo zip temporal.
+                        zip_base_name = f"temp_{os.path.basename(path_to_send)}"
+                        # shutil.make_archive crea 'temp_nombrecarpeta.zip'. Le pasamos el nombre sin la extensión.
+                        file_path = shutil.make_archive(zip_base_name, 'zip', path_to_send)
+                        is_temp_zip = True
+                        print(f"Carpeta comprimida en '{file_path}'. Iniciando envío...")
+                    else:
+                        # Si no es una carpeta, es un archivo normal.
+                        file_path = path_to_send
 
                     # Verificamos que conocemos esa MAC
                     with app_state['known_hosts_lock']:
                         if dest_mac_bytes not in app_state['known_hosts']:
                             print("Error: MAC de destino desconocida. Usa /list para ver los usuarios.")
+                            # Si creamos un zip temporal, lo borramos antes de salir.
+                            if is_temp_zip:
+                                os.remove(file_path)
                             continue
                     
-                    # --- Envío de la solicitud FILE_START ---
-                    file_size = os.path.getsize(file_path)
-
                     # --- Envío de la solicitud FILE_START ---
                     file_size = os.path.getsize(file_path)
                     file_name = os.path.basename(file_path)
@@ -168,7 +182,8 @@ def main():
                         app_state['file_transfer_state'][dest_mac_bytes] = {"status": "waiting_ack"}
                     
                     # Inicia un hilo dedicado para manejar el envío de este archivo.
-                    sender_thread = threading.Thread(target=file_sender_thread, args=(s, my_mac, dest_mac_bytes, file_path, app_state))
+                    # Le pasamos la ruta del archivo (o del zip temporal) y una bandera.
+                    sender_thread = threading.Thread(target=file_sender_thread, args=(s, my_mac, dest_mac_bytes, file_path, app_state, is_temp_zip))
                     sender_thread.daemon = True
                     sender_thread.start()
                     print(f"Solicitud de envío de '{file_name}' enviada. Esperando aceptación del receptor...")

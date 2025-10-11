@@ -5,7 +5,7 @@ import time
 import socket
 import struct
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                             QHBoxLayout, QLabel, QPushButton, QListWidget, 
+                             QHBoxLayout, QLabel, QPushButton, QListWidget, QListWidgetItem,
                              QTextEdit, QLineEdit, QFileDialog, QSplashScreen, 
                              QProgressBar, QMessageBox, QComboBox, QDialog)
 from PyQt5.QtGui import QPixmap, QFont, QIcon, QColor, QPainter, QLinearGradient, QBrush, QPen, QFontDatabase
@@ -270,15 +270,37 @@ class ChatApp(QMainWindow):
         self.file_progress.connect(self.update_file_progress)
         self.file_request_received.connect(self.show_file_request)
         
+        # Timer para actualizar periódicamente la lista de usuarios
+        self.refresh_timer = QTimer()
+        self.refresh_timer.timeout.connect(self.refresh_users)
+        # Actualizar cada 30 segundos
+        self.refresh_timer.start(30000)
+        
     def setup_network(self):
         """Configura la red y los hilos de comunicación"""
+        # Obtener interfaces disponibles
+        interfaces = socket.if_nameindex()
+        
+        if not interfaces:
+            QMessageBox.critical(self, "Error", "No se encontraron interfaces de red.")
+            return False
+        
         # Diálogo para seleccionar interfaz
         dialog = InterfaceSelectionDialog(self)
         if dialog.exec_() != QDialog.Accepted:
-            QMessageBox.critical(self, "Error", "Debes seleccionar una interfaz de red.")
-            sys.exit(1)
-            
+            QMessageBox.warning(self, "Aviso", "No se seleccionó ninguna interfaz de red.")
+            return False
+        
         iface_name = dialog.get_selected_interface()
+        
+        # Verificar que la interfaz sigue existiendo
+        try:
+            if iface_name not in [iface[1] for iface in socket.if_nameindex()]:
+                QMessageBox.critical(self, "Error", f"La interfaz {iface_name} ya no está disponible.")
+                return False
+        except:
+            QMessageBox.critical(self, "Error", "Error al verificar las interfaces disponibles.")
+            return False
         
         try:
             # Crear el socket RAW
@@ -287,6 +309,12 @@ class ChatApp(QMainWindow):
             
             # Obtener la dirección MAC de la interfaz
             self.my_mac = obtener_direccion_mac(iface_name)
+            
+            # Verificar que se obtuvo una MAC válida
+            if not self.my_mac or len(self.my_mac) != 6:
+                QMessageBox.critical(self, "Error", f"No se pudo obtener una dirección MAC válida para {iface_name}")
+                return False
+            
             self.setWindowTitle(f"LinkChat - {mac_bits_cadena(self.my_mac)}")
             
             # Iniciar los hilos
@@ -310,6 +338,10 @@ class ChatApp(QMainWindow):
         """Wrapper para el hilo receptor que emite señales a la interfaz"""
         def custom_handler(src_mac, msg_type, payload):
             """Manejador personalizado para mensajes recibidos"""
+            # Convertir msg_type de bytes a int si es necesario
+            if isinstance(msg_type, bytes) and len(msg_type) == 1:
+                msg_type = msg_type[0]
+                
             if msg_type == MSG_TYPE_CHAT:
                 # Mensaje de chat
                 message = payload.decode('utf-8', errors='replace')
@@ -319,8 +351,22 @@ class ChatApp(QMainWindow):
                 file_size = struct.unpack('!Q', payload[:8])[0]
                 file_name = payload[8:].decode('utf-8', errors='replace')
                 self.file_request_received.emit(src_mac, mac_bits_cadena(src_mac), file_name, file_size)
-        
-        receive_thread(self.socket, self.my_mac, self.app_state, custom_handler)
+            elif msg_type == MSG_TYPE_FILE_DATA:
+                # Actualizar el progreso
+                pass
+            elif msg_type == MSG_TYPE_FILE_END:
+                # Archivo recibido completamente
+                with self.app_state['file_transfer_lock']:
+                    if src_mac in self.app_state['file_transfer_state']:
+                        transfer = self.app_state['file_transfer_state'][src_mac]
+                        file_name = transfer['file_name']
+                        # Actualizar la interfaz con 100% completado
+                        self.file_progress.emit(file_name, 100)
+    
+        try:
+            receive_thread(self.socket, self.my_mac, self.app_state, custom_handler)
+        except Exception as e:
+            print(f"Error en receive_thread: {e}")
     
     def setup_ui(self):
         """Configura los elementos de la interfaz"""
@@ -476,6 +522,11 @@ class ChatApp(QMainWindow):
             return
             
         try:
+            # Verificar que el socket está activo
+            if not self.socket or getattr(self.socket, '_closed', False):
+                QMessageBox.warning(self, "Error", "La conexión de red no está activa.")
+                return
+            
             # Preparar el mensaje
             payload = message.encode('utf-8')
             
@@ -519,13 +570,19 @@ class ChatApp(QMainWindow):
         if not file_path:
             return
             
+        # Verificar que el archivo exista y sea accesible
+        if not os.path.isfile(file_path) or not os.access(file_path, os.R_OK):
+            QMessageBox.critical(self, "Error", f"El archivo {file_path} no existe o no es accesible")
+            return
+            
         try:
             # Obtener información del archivo
             file_name = os.path.basename(file_path)
             file_size = os.path.getsize(file_path)
             
             # Crear una entrada en la lista de transferencias
-            item = QListWidget.QListWidgetItem(f"Enviando: {file_name} (0%)")
+            from PyQt5.QtWidgets import QListWidgetItem
+            item = QListWidgetItem(f"Enviando: {file_name} (0%)")
             self.transfers_list.addItem(item)
             
             # Iniciar hilo para enviar el archivo
@@ -577,13 +634,34 @@ class ChatApp(QMainWindow):
             save_path, _ = QFileDialog.getSaveFileName(self, "Guardar archivo", file_name, "Todos los archivos (*)")
             
             if save_path:
-                # Aceptar el archivo
-                with self.app_state['pending_file_requests_lock']:
-                    self.app_state['pending_file_requests'][src_mac] = {'file_name': file_name, 'save_path': save_path}
-                
-                # Crear entrada en la lista de transferencias
-                item = QListWidget.QListWidgetItem(f"Recibiendo: {file_name} (0%)")
-                self.transfers_list.addItem(item)
+                # Preparar el archivo para recepción
+                try:
+                    file_handle = open(save_path, 'wb')
+                    
+                    # Aceptar el archivo y configurar el estado
+                    with self.app_state['file_transfer_lock']:
+                        self.app_state['file_transfer_state'][src_mac] = {
+                            'file_name': file_name,
+                            'file_size': file_size,
+                            'file_handle': file_handle,
+                            'status': 'receiving',
+                            'received_size': 0,
+                            'save_path': save_path
+                        }
+                    
+                    # Crear entrada en la lista de transferencias
+                    item = QListWidgetItem(f"Recibiendo: {file_name} (0%)")
+                    self.transfers_list.addItem(item)
+                    
+                    # Enviar ACK
+                    if self.socket:
+                        eth_header = src_mac + self.my_mac + struct.pack('!H', LINK_CHAT_ETHERTYPE)
+                        msg_header = struct.pack('!B', MSG_TYPE_FILE_ACK)  # Corrección: empaquetar como byte
+                        packet = eth_header + msg_header
+                        self.socket.send(packet)
+                        
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"No se pudo preparar el archivo para recepción: {e}")
     
     @staticmethod
     def format_size(size_bytes):
@@ -594,24 +672,51 @@ class ChatApp(QMainWindow):
             size_bytes /= 1024
         return f"{size_bytes:.2f} TB"
 
+    def closeEvent(self, event):
+        """Maneja el cierre de la aplicación"""
+        # Cerrar socket si está abierto
+        if self.socket:
+            try:
+                self.socket.close()
+            except:
+                pass
+        
+        # Aceptar el evento de cierre
+        event.accept()
+
 def show_splash_screen():
     """Muestra una pantalla de bienvenida estilo videojuego"""
     splash = AnimatedSplashScreen()
     splash.show()
     
-    # Esperar a que termine la animación
-    while splash.timer.isActive():
+    # Usar un enfoque más seguro para no bloquear la UI
+    start_time = time.time()
+    while splash.timer.isActive() and time.time() - start_time < 5:  # Timeout de 5 segundos
         QApplication.processEvents()
+        time.sleep(0.01)  # Pequeña pausa para no consumir CPU
     
     # Tiempo adicional para apreciar la pantalla completada
-    time.sleep(1)
+    time.sleep(0.5)
     
     return splash
 
 def main():
+    # Configurar variables de entorno si no están presentes
+    if 'XDG_RUNTIME_DIR' not in os.environ:
+        os.environ['XDG_RUNTIME_DIR'] = '/tmp/runtime-' + os.environ.get('USER', 'root')
+        try:
+            os.makedirs(os.environ['XDG_RUNTIME_DIR'], exist_ok=True)
+            os.chmod(os.environ['XDG_RUNTIME_DIR'], 0o700)
+        except:
+            pass
+    
     app = QApplication(sys.argv)
     
-    # Mostrar pantalla de bienvenida estilo videojuego
+    # Configurar el manejo de señales para una terminación más limpia
+    import signal
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+    
+    # Mostrar pantalla de bienvenida
     splash = show_splash_screen()
     
     # Iniciar la aplicación principal

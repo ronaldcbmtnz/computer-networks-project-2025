@@ -1,1 +1,4 @@
-# Proyecto de Ronald
+# Proyecto de la Asignatura Redes de Computadoras.
+Integrantes:
+-Josué Javier Senarega Claro C311
+-Ronald Cabrera Martíneza C311

@@ -31,3 +31,8 @@ FILE_CHUNK_SIZE = 1400
 # Define el tiempo en segundos que el emisor esperará la aceptación del receptor
 # antes de cancelar la solicitud de envío de archivo.
 FILE_TRANSFER_TIMEOUT = 30
+
+# --- Constantes de Red ---
+
+# Dirección MAC para broadcast (enviar a todos en la red local).
+BROADCAST_MAC = b'\xff\xff\xff\xff\xff\xff'

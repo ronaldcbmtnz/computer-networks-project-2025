@@ -2,8 +2,8 @@ import socket
 import struct
 import time
 import os
-import shutil  # <-- AÑADE ESTA IMPORTACIÓN
-from config import *
+import shutil
+from config import *  # <-- Esta línea ya importa todo, incluyendo la nueva constante
 from utils import mac_bits_cadena
 
 def receive_thread(sock, my_mac, state):
@@ -14,129 +14,161 @@ def receive_thread(sock, my_mac, state):
         my_mac (bytes): La dirección MAC de este host para ignorar sus propios paquetes.
         state (dict): El diccionario de estado compartido de la aplicación.
     """
+    gui_queue = state['gui_queue'] # Obtenemos la cola de la GUI
+
     while True:
         try:
-            # Espera y recibe datos del socket. 1518 es el tamaño máximo de una trama Ethernet.
             raw_data, addr = sock.recvfrom(1518)
             
-            # Desempaqueta la cabecera Ethernet (14 bytes): MAC destino, MAC origen, EtherType.
             dest_mac, src_mac, eth_type = struct.unpack('!6s6sH', raw_data[:14])
             
-            # Ignora los paquetes que nosotros mismos hemos enviado.
             if src_mac == my_mac:
                 continue
 
-            # El payload son los datos que vienen después de la cabecera Ethernet.
             payload = raw_data[14:]
-            # El primer byte del payload es nuestro tipo de mensaje.
             msg_type = payload[:1]
-            # El resto son los datos del mensaje.
-            msg_data = payload[1:]
 
-            # --- Lógica de Descubrimiento Pasivo ---
-            # Usamos un lock para acceder de forma segura al diccionario compartido 'known_hosts'.
-            with state['known_hosts_lock']:
-                # Si la MAC de origen no está en nuestra lista de hosts conocidos...
-                if src_mac not in state['known_hosts']:
-                    # La añadimos usando su MAC formateada como alias inicial.
-                    state['known_hosts'][src_mac] = mac_bits_cadena(src_mac)
-                    # Imprimimos una notificación en la consola del usuario.
-                    print(f"\r\n[+] Nuevo host descubierto: {mac_bits_cadena(src_mac)}")
-                    print("> ", end='', flush=True)
-
-            # --- Procesamiento de Mensajes según su Tipo ---
-            if msg_type == MSG_TYPE_DISCOVERY:
-                # No se necesita hacer nada más, el descubrimiento pasivo ya lo añadió.
-                pass
+            # --- Lógica de procesamiento de mensajes ---
             
+            # Añadir host si es nuevo
+            is_new_host = False
+            with state['known_hosts_lock']:
+                if src_mac not in state['known_hosts']:
+                    state['known_hosts'][src_mac] = "Nuevo Usuario"
+                    is_new_host = True
+            
+            if is_new_host:
+                # Notificamos a la GUI que hay un nuevo usuario
+                gui_queue.put(('new_user', src_mac))
+
+            if msg_type == MSG_TYPE_DISCOVERY:
+                pass
+
             elif msg_type == MSG_TYPE_CHAT:
-                # Obtiene el alias del emisor. Si no existe, usa la MAC formateada.
-                sender_alias = state['known_hosts'].get(src_mac, mac_bits_cadena(src_mac))
-                # Decodifica el mensaje a texto (UTF-8) e lo imprime.
-                print(f"\r\nMensaje de {sender_alias}: {msg_data.decode('utf-8', errors='ignore')}")
-                print("> ", end='', flush=True)
-                
-            elif msg_type == MSG_TYPE_FILE_START:
-                # Desempaqueta el tamaño del archivo (8 bytes, long long) y el nombre.
-                file_size = struct.unpack('!Q', msg_data[:8])[0]
-                
-                # Decodifica el nombre del archivo y elimina cualquier byte nulo al final.
-                file_name_bytes = msg_data[8:].strip(b'\x00')
-                file_name = file_name_bytes.decode('utf-8')
-                
-                sender_alias = state['known_hosts'].get(src_mac, mac_bits_cadena(src_mac))
-                
-                # Guarda la solicitud en la lista de pendientes para que el usuario pueda aceptarla.
-                with state['pending_file_requests_lock']:
-                    state['pending_file_requests'][src_mac] = {"file_name": file_name, "file_size": file_size}
-                
-                # Notifica al usuario sobre la solicitud entrante.
-                print(f"\r\n[!] {sender_alias} quiere enviarte '{file_name}' ({file_size} bytes).")
-                print(f"    Usa /accept {mac_bits_cadena(src_mac)} para aceptar.")
-                print("> ", end='', flush=True)
-
-            elif msg_type == MSG_TYPE_FILE_ACK:
-                # El receptor ha aceptado el archivo.
-                with state['file_transfer_lock']:
-                    # Comprueba si estábamos esperando esta confirmación.
-                    if src_mac in state['file_transfer_state'] and state['file_transfer_state'][src_mac].get("status") == "waiting_ack":
-                        # Cambia el estado a "enviando" para que el hilo emisor comience la transferencia.
-                        state['file_transfer_state'][src_mac]["status"] = "sending"
-                        print(f"\r\n[*] {state['known_hosts'].get(src_mac, mac_bits_cadena(src_mac))} aceptó el archivo. Iniciando envío...")
-                        print("> ", end='', flush=True)
+                try:
+                    # Decodificamos el mensaje y lo limpiamos con .strip()
+                    message_text = payload[1:].decode('utf-8').strip()
                     
-            elif msg_type == MSG_TYPE_FILE_DATA:
-                # Estamos recibiendo un trozo de archivo.
-                with state['file_transfer_lock']:
-                    # Comprueba si estamos en modo "recibiendo" desde esta MAC.
-                    if src_mac in state['file_transfer_state'] and state['file_transfer_state'][src_mac].get("status") == "receiving":
-                        transfer = state['file_transfer_state'][src_mac]
-                        # Desempaqueta el número de secuencia (4 bytes, integer).
-                        seq_num = struct.unpack('!I', msg_data[:4])[0]
-                        # El resto son los datos del trozo.
-                        chunk_data = msg_data[4:]
-                        
-                        # Calcula la posición en el archivo donde escribir este trozo.
-                        offset = seq_num * FILE_CHUNK_SIZE
-                        transfer["file_handle"].seek(offset)
-                        transfer["file_handle"].write(chunk_data)
-                        
-                        # Actualiza el progreso de la descarga.
-                        transfer["received_size"] += len(chunk_data)
-                        progress = (transfer["received_size"] / transfer["file_size"]) * 100
-                        # Imprime el progreso en la misma línea para no saturar la consola.
-                        print(f"\rRecibiendo '{transfer['file_name']}': {progress:.2f}% completado.", end="", flush=True)
+                    sender_mac_str = mac_bits_cadena(src_mac)
+                    
+                    # Determinar si es un mensaje privado o broadcast
+                    if dest_mac == my_mac:
+                        # Es un mensaje privado para nosotros
+                        display_text = f"[Privado de {sender_mac_str}]: {message_text}"
+                    else:
+                        # Es un mensaje broadcast
+                        display_text = f"[{sender_mac_str}]: {message_text}"
+                    
+                    # Ponemos el mensaje formateado en la cola
+                    gui_queue.put(('chat_message', display_text))
 
-            elif msg_type == MSG_TYPE_FILE_END:
+                except UnicodeDecodeError:
+                    sender_mac_str = mac_bits_cadena(src_mac)
+                    gui_queue.put(('chat_message', f"[{sender_mac_str}]: [mensaje con formato inválido]"))
+            
+            # 5. Añadir lógica para manejar solicitudes de archivo
+            elif msg_type == MSG_TYPE_FILE_START:
+                try:
+                    # Desempaquetar la bandera (1 byte) y el tamaño (8 bytes)
+                    is_folder_flag = payload[1:2]
+                    file_size = struct.unpack('!Q', payload[2:10])[0]
+                    
+                    # El resto del payload contiene el nombre del archivo y el delimitador
+                    file_name_payload = payload[10:]
+                    
+                    # Encontrar la posición del delimitador nulo
+                    null_terminator_pos = file_name_payload.find(b'\x00')
+                    
+                    if null_terminator_pos == -1:
+                        raise ValueError("Paquete FILE_START malformado, sin delimitador de nombre.")
+
+                    # Decodificar solo la parte del nombre del archivo
+                    file_name = file_name_payload[:null_terminator_pos].decode('utf-8')
+                    
+                    # Poner el evento en la cola, incluyendo la bandera
+                    gui_queue.put(('file_request', src_mac, file_name, file_size, is_folder_flag == b'\x01'))
+
+                except Exception as e:
+                    gui_queue.put(('error', f"Error al procesar solicitud de archivo: {e}"))
+            
+            # 5. Añadir lógica para manejar el ACK de archivo
+            elif msg_type == MSG_TYPE_FILE_ACK:
+                # El destinatario ha aceptado nuestro archivo.
+                # Actualizamos el estado para que file_sender_thread pueda empezar a enviar.
                 with state['file_transfer_lock']:
                     if src_mac in state['file_transfer_state']:
-                        transfer = state['file_transfer_state'][src_mac]
-                        # Cierra el manejador del archivo.
-                        transfer['file_handle'].close()
-                        
-                        final_file_path = f"recibido_{transfer['file_name']}"
-                        print(f"\r\n[+] Transferencia de '{transfer['file_name']}' completada.")
-                        
-                        # --- LÓGICA PARA DESCOMPRIMIR ---
-                        if final_file_path.endswith('.zip'):
-                            print(f"El archivo es un zip. Descomprimiendo...")
-                            try:
-                                # Extrae el contenido en una carpeta con el mismo nombre (sin .zip).
-                                extract_dir = final_file_path[:-4]
-                                shutil.unpack_archive(final_file_path, extract_dir)
-                                print(f"Carpeta extraída en: '{extract_dir}'")
-                                # Borra el archivo zip después de extraerlo.
-                                os.remove(final_file_path)
-                            except Exception as e:
-                                print(f"Error al descomprimir: {e}")
-
-                        del state['file_transfer_state'][src_mac]
-                print("> ", end='', flush=True)
+                        state['file_transfer_state'][src_mac]['status'] = 'sending'
             
+            # 1. Añadir lógica para recibir trozos de archivo
+            elif msg_type == MSG_TYPE_FILE_DATA:
+                try:
+                    with state['pending_file_requests_lock']:
+                        if src_mac in state['pending_file_requests']:
+                            request = state['pending_file_requests'][src_mac]
+                            file_path = request['path']
+                            
+                            # El payload es el número de secuencia (4 bytes) + datos
+                            chunk_data = payload[5:] # Ignoramos el seq_num por ahora
+                            
+                            # Abrir el archivo en modo 'append binary' y escribir el trozo
+                            with open(file_path, 'ab') as f:
+                                f.write(chunk_data)
+                            
+                            # Actualizar el tamaño descargado
+                            request['downloaded_size'] += len(chunk_data)
+                except Exception as e:
+                    state['gui_queue'].put(('error', f"Error al recibir trozo de archivo: {e}"))
+
+            # 2. Añadir lógica para finalizar la transferencia
+            elif msg_type == MSG_TYPE_FILE_END:
+                try:
+                    with state['pending_file_requests_lock']:
+                        if src_mac in state['pending_file_requests']:
+                            request = state['pending_file_requests'][src_mac]
+                            file_name = request['file_name']
+                            file_path = request['path']
+                            is_folder = request.get('is_folder', False) # Obtenemos la bandera
+
+                            # Lógica de descompresión
+                            if is_folder and os.path.exists(file_path):
+                                try:
+                                    # Descomprimir el archivo en el directorio actual
+                                    shutil.unpack_archive(file_path, '.')
+                                    # Borrar el archivo zip temporal
+                                    os.remove(file_path)
+                                    # Notificar a la GUI con el nombre original de la carpeta
+                                    original_folder_name = file_name.replace('.zip', '')
+                                    state['gui_queue'].put(('folder_received', original_folder_name))
+                                except Exception as unpack_e:
+                                    state['gui_queue'].put(('error', f"No se pudo descomprimir {file_name}: {unpack_e}"))
+                            else:
+                                # Notificar a la GUI que la descarga del archivo terminó
+                                state['gui_queue'].put(('file_received', file_name))
+
+                            # CAMBIAR EL PROPIETARIO DEL ARCHIVO
+                            # Obtener el usuario que ejecutó sudo, si existe.
+                            sudo_user = os.environ.get('SUDO_USER')
+                            if sudo_user and os.path.exists(file_path):
+                                try:
+                                    # shutil.chown cambia el propietario (user:group)
+                                    shutil.chown(file_path, user=sudo_user, group=sudo_user)
+                                except Exception as chown_e:
+                                    state['gui_queue'].put(('error', f"No se pudo cambiar el dueño de {file_name}: {chown_e}"))
+
+                            # ENVIAR CONFIRMACIÓN DE VUELTA AL EMISOR
+                            display_name = original_folder_name if is_folder else file_name
+                            confirmation_message = f"[Sistema] El elemento '{display_name}' fue recibido correctamente.".encode('utf-8')
+                            eth_header = struct.pack('!6s6sH', src_mac, my_mac, LINK_CHAT_ETHERTYPE)
+                            packet = eth_header + MSG_TYPE_CHAT + confirmation_message
+                            sock.send(packet)
+
+                            # Limpiar la solicitud pendiente
+                            del state['pending_file_requests'][src_mac]
+                except Exception as e:
+                    state['gui_queue'].put(('error', f"Error al finalizar archivo: {e}"))
+
         except Exception as e:
-            # En caso de un error grave, se imprime y el hilo termina.
-            print(f"\nError en el hilo de recepción: {e}")
-            break
+            gui_queue.put(('error', f"Error en el hilo receptor: {e}"))
 
 def file_sender_thread(sock, my_mac, dest_mac_bytes, file_path, state, is_temp_zip=False):
     """
@@ -188,31 +220,32 @@ def file_sender_thread(sock, my_mac, dest_mac_bytes, file_path, state, is_temp_z
         # --- 3. Enviar Paquete de Fin ---
         # Envía un último paquete para notificar que la transferencia ha terminado.
         sock.send(header + MSG_TYPE_FILE_END)
-        print(f"\r\n[*] Envío de '{os.path.basename(file_path)}' completado.")
-        print("> ", end='', flush=True)
-
+        
     except Exception as e:
-        print(f"\r\nError durante el envío del archivo: {e}")
+        # Usamos la cola de la GUI para mostrar errores en el hilo de envío
+        state['gui_queue'].put(('error', f"Error durante el envío de '{os.path.basename(file_path)}': {e}"))
     finally:
         # --- 4. LIMPIEZA ---
         # Si el archivo enviado era un zip temporal, lo borramos.
         if is_temp_zip and os.path.exists(file_path):
-            os.remove(file_path)
-            print(f"Archivo temporal '{file_path}' eliminado.")
+            try:
+                os.remove(file_path)
+                state['gui_queue'].put(('chat_message', f"[Sistema] Archivo temporal '{os.path.basename(file_path)}' eliminado."))
+            except Exception as e:
+                state['gui_queue'].put(('error', f"No se pudo eliminar el archivo temporal: {e}"))
         
         # Elimina la entrada de transferencia del estado de la aplicación.
         with state['file_transfer_lock']:
             if dest_mac_bytes in state['file_transfer_state']:
-                del state['file_transfer_state'][dest_mac_bytes]        
+                del state['file_transfer_state'][dest_mac_bytes]
 
 def discovery_thread(sock, my_mac):
     """
     Hilo que envía un paquete de descubrimiento en broadcast cada 10 segundos.
     """
-    # La dirección MAC de broadcast es todo F's.
-    broadcast_mac = b'\xff\xff\xff\xff\xff\xff'
+    # La dirección MAC de broadcast ahora se importa desde config.py
     # Prepara la cabecera y el payload del paquete de descubrimiento.
-    header = struct.pack('!6s6sH', broadcast_mac, my_mac, LINK_CHAT_ETHERTYPE)
+    header = struct.pack('!6s6sH', BROADCAST_MAC, my_mac, LINK_CHAT_ETHERTYPE)
     packet = header + MSG_TYPE_DISCOVERY
 
     while True:

@@ -1,4 +1,6 @@
-# Proyecto de la Asignatura Redes de Computadoras.
-Integrantes:
--Josué Javier Senarega Claro C311
--Ronald Cabrera Martíneza C311
+# Proyecto de la Asignatura Redes de Computadoras
+
+**Integrantes:**
+
+- Josué Javier Senarega Claro — C311  
+- Ronald Cabrera Martínez — C311

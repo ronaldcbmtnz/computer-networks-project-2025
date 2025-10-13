@@ -29,20 +29,20 @@ def receive_thread(sock, my_mac, state):
             msg_type = payload[:1]
 
             # --- Lógica de procesamiento de mensajes ---
-            
-            # Añadir host si es nuevo
-            is_new_host = False
-            with state['known_hosts_lock']:
-                if src_mac not in state['known_hosts']:
-                    state['known_hosts'][src_mac] = "Nuevo Usuario"
-                    is_new_host = True
-            
-            if is_new_host:
-                # Notificamos a la GUI que hay un nuevo usuario
-                gui_queue.put(('new_user', src_mac))
-
             if msg_type == MSG_TYPE_DISCOVERY:
-                pass
+                # Añadir host si es nuevo
+                is_new_host = False
+                with state['known_hosts_lock']:
+                    if src_mac not in state['known_hosts']:
+                        state['known_hosts'][src_mac] = "Nuevo Usuario"
+                        is_new_host = True
+                
+                if is_new_host:
+                    # Notificamos a la GUI que hay un nuevo usuario
+                    gui_queue.put(('new_user', src_mac))
+
+           
+            
 
             elif msg_type == MSG_TYPE_CHAT:
                 try:
@@ -85,16 +85,31 @@ def receive_thread(sock, my_mac, state):
                     # Decodificar solo la parte del nombre del archivo
                     file_name = file_name_payload[:null_terminator_pos].decode('utf-8')
                     
-                    # Poner el evento en la cola, incluyendo la bandera
-                    gui_queue.put(('file_request', src_mac, file_name, file_size, is_folder_flag == b'\x01'))
+                    # --- LÓGICA DE ACEPTACIÓN AUTOMÁTICA PARA CLI ---
+                    run_mode = os.environ.get('RUN_MODE', 'GUI').upper()
+                    if run_mode == 'CLI':
+                        # --- MODO CLI: PREPARARSE SIN ENVIAR ACK ---
+                        with state['pending_file_requests_lock']:
+                            state['pending_file_requests'][src_mac] = {
+                                "file_name": file_name,
+                                "file_size": file_size,
+                                "downloaded_size": 0,
+                                "path": file_name,
+                                "is_folder": is_folder_flag == b'\x01'
+                            }
+                        # NO enviamos ACK. Solo notificamos que la descarga ha comenzado.
+                        gui_queue.put(('file_download_started', file_name))
+                    else:
+                        # --- MODO GUI: PREGUNTAR Y ENVIAR ACK (si se acepta) ---
+                        # Este bloque se mantiene intacto para la GUI
+                        gui_queue.put(('file_request', src_mac, file_name, file_size, is_folder_flag == b'\x01'))
 
                 except Exception as e:
                     gui_queue.put(('error', f"Error al procesar solicitud de archivo: {e}"))
             
             # 5. Añadir lógica para manejar el ACK de archivo
             elif msg_type == MSG_TYPE_FILE_ACK:
-                # El destinatario ha aceptado nuestro archivo.
-                # Actualizamos el estado para que file_sender_thread pueda empezar a enviar.
+                # --- ESTE BLOQUE AHORA SOLO AFECTA A LA GUI ---
                 with state['file_transfer_lock']:
                     if src_mac in state['file_transfer_state']:
                         state['file_transfer_state'][src_mac]['status'] = 'sending'
@@ -127,17 +142,26 @@ def receive_thread(sock, my_mac, state):
                             request = state['pending_file_requests'][src_mac]
                             file_name = request['file_name']
                             file_path = request['path']
-                            is_folder = request.get('is_folder', False) # Obtenemos la bandera
+                            is_folder = request.get('is_folder', False)
+
+                            # Definimos la ruta de destino final
+                            final_path = file_path
+                            original_folder_name = ""
 
                             # Lógica de descompresión
                             if is_folder and os.path.exists(file_path):
                                 try:
-                                    # Descomprimir el archivo en el directorio actual
-                                    shutil.unpack_archive(file_path, '.')
-                                    # Borrar el archivo zip temporal
-                                    os.remove(file_path)
-                                    # Notificar a la GUI con el nombre original de la carpeta
+                                    # 1. Obtenemos el nombre de la carpeta original
                                     original_folder_name = file_name.replace('.zip', '')
+                                    final_path = original_folder_name # La ruta final será la nueva carpeta
+
+                                    # 2. Descomprimimos el archivo en un nuevo directorio con el nombre original
+                                    shutil.unpack_archive(file_path, final_path)
+                                    
+                                    # 3. Borramos el archivo zip temporal
+                                    os.remove(file_path)
+                                    
+                                    # Notificamos a la GUI con el nombre original de la carpeta
                                     state['gui_queue'].put(('folder_received', original_folder_name))
                                 except Exception as unpack_e:
                                     state['gui_queue'].put(('error', f"No se pudo descomprimir {file_name}: {unpack_e}"))
@@ -145,15 +169,22 @@ def receive_thread(sock, my_mac, state):
                                 # Notificar a la GUI que la descarga del archivo terminó
                                 state['gui_queue'].put(('file_received', file_name))
 
-                            # CAMBIAR EL PROPIETARIO DEL ARCHIVO
-                            # Obtener el usuario que ejecutó sudo, si existe.
+                            # CAMBIAR EL PROPIETARIO DEL ARCHIVO O CARPETA RECIBIDA
                             sudo_user = os.environ.get('SUDO_USER')
-                            if sudo_user and os.path.exists(file_path):
+                            if sudo_user and os.path.exists(final_path):
                                 try:
-                                    # shutil.chown cambia el propietario (user:group)
-                                    shutil.chown(file_path, user=sudo_user, group=sudo_user)
+                                    # 4. Cambiamos el propietario de la carpeta/archivo final
+                                    if os.path.isdir(final_path):
+                                        # Si es un directorio, cambiamos propietario recursivamente
+                                        for dirpath, dirnames, filenames in os.walk(final_path):
+                                            shutil.chown(dirpath, user=sudo_user, group=sudo_user)
+                                            for filename in filenames:
+                                                shutil.chown(os.path.join(dirpath, filename), user=sudo_user, group=sudo_user)
+                                    else:
+                                        # Si es un archivo, solo a él
+                                        shutil.chown(final_path, user=sudo_user, group=sudo_user)
                                 except Exception as chown_e:
-                                    state['gui_queue'].put(('error', f"No se pudo cambiar el dueño de {file_name}: {chown_e}"))
+                                    state['gui_queue'].put(('error', f"No se pudo cambiar el dueño de {final_path}: {chown_e}"))
 
                             # ENVIAR CONFIRMACIÓN DE VUELTA AL EMISOR
                             display_name = original_folder_name if is_folder else file_name
@@ -175,54 +206,46 @@ def file_sender_thread(sock, my_mac, dest_mac_bytes, file_path, state, is_temp_z
     Hilo dedicado para enviar un archivo, gestionando la espera del ACK y el envío por trozos.
     """
     try:
-        # --- 1. Esperar la Aceptación (ACK) ---
-        wait_time = FILE_TRANSFER_TIMEOUT
-        while wait_time > 0:
-            with state['file_transfer_lock']:
-                transfer = state['file_transfer_state'].get(dest_mac_bytes)
-                # Si el estado ha cambiado a "sending", el receptor aceptó.
-                if transfer and transfer.get("status") == "sending":
-                    break
-            # Espera 1 segundo antes de volver a comprobar.
-            time.sleep(1)
-            wait_time -= 1
-        
-        # Si el tiempo se agota y no hay ACK, cancela la transferencia.
-        if wait_time == 0:
-            print(f"\r\n[!] El receptor no aceptó el archivo a tiempo.")
-            print("> ", end='', flush=True)
-            with state['file_transfer_lock']:
-                if dest_mac_bytes in state['file_transfer_state']:
-                    del state['file_transfer_state'][dest_mac_bytes]
-            return
-        
-        # --- 2. Enviar Datos del Archivo ---
-        # Prepara la cabecera Ethernet, que será la misma para todos los paquetes de esta transferencia.
+        run_mode = os.environ.get('RUN_MODE', 'GUI').upper()
+
+        if run_mode == 'CLI':
+            # --- MODO CLI: ENVÍO DIRECTO ---
+            # Pequeña pausa para que el receptor procese el FILE_START
+            time.sleep(0.2)
+        else:
+            # --- MODO GUI: ESPERAR ACK ---
+            wait_time = FILE_TRANSFER_TIMEOUT
+            while wait_time > 0:
+                with state['file_transfer_lock']:
+                    transfer = state['file_transfer_state'].get(dest_mac_bytes)
+                    if transfer and transfer.get("status") == "sending":
+                        break
+                time.sleep(1)
+                wait_time -= 1
+            
+            if wait_time == 0:
+                error_message = f"El receptor {mac_bits_cadena(dest_mac_bytes)} no aceptó el archivo a tiempo."
+                state['gui_queue'].put(('error', error_message))
+                return
+
+        # --- LÓGICA DE ENVÍO COMÚN ---
+        # (Esta parte ahora se ejecuta después de la lógica específica de cada modo)
         header = struct.pack('!6s6sH', dest_mac_bytes, my_mac, LINK_CHAT_ETHERTYPE)
-        # Abre el archivo en modo lectura binaria ('rb').
         with open(file_path, 'rb') as f:
             seq_num = 0
             while True:
-                # Lee un trozo del archivo del tamaño configurado.
                 chunk = f.read(FILE_CHUNK_SIZE)
-                # Si no hay más datos para leer, hemos terminado.
                 if not chunk:
                     break
-                # Construye el payload: tipo de mensaje, número de secuencia y los datos del trozo.
                 data_payload = MSG_TYPE_FILE_DATA + struct.pack('!I', seq_num) + chunk
-                # Envía el paquete completo.
                 sock.send(header + data_payload)
-                # Incrementa el número de secuencia para el siguiente paquete.
                 seq_num += 1
-                # Pequeña pausa para no saturar la red, especialmente en Wi-Fi.
                 time.sleep(0.002)
         
         # --- 3. Enviar Paquete de Fin ---
-        # Envía un último paquete para notificar que la transferencia ha terminado.
         sock.send(header + MSG_TYPE_FILE_END)
         
     except Exception as e:
-        # Usamos la cola de la GUI para mostrar errores en el hilo de envío
         state['gui_queue'].put(('error', f"Error durante el envío de '{os.path.basename(file_path)}': {e}"))
     finally:
         # --- 4. LIMPIEZA ---

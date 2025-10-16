@@ -79,12 +79,7 @@ def handle_user_input(sock, my_mac, state):
                     # Enviamos el paquete de inicio
                     sock.send(header + MSG_TYPE_FILE_START + payload)
 
-                    # --- CORRECCIÓN: NO GESTIONAMOS ESTADO DE ACK EN CLI ---
-                    # Ya no necesitamos esto, el hilo emisor no lo usará en modo CLI
-                    # with state['file_transfer_lock']:
-                    #     state['file_transfer_state'][dest_mac] = {"status": "pending_ack"}
-                    
-                    # Lanzamos el hilo emisor
+                   
                     sender_thread = threading.Thread(
                         target=file_sender_thread,
                         args=(sock, my_mac, dest_mac, file_path, state)

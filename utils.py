@@ -11,7 +11,7 @@ def obtener_direccion_mac(ifname):
         bytes: La dirección MAC de 6 bytes.
     """
     # Creamos un socket temporal para poder hacer llamadas al sistema.
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
     # fcntl.ioctl permite realizar operaciones de control en un dispositivo.
     # 0x8927 (SIOCGIFHWADDR) es la llamada para obtener la dirección de hardware.
     # Empaquetamos el nombre de la interfaz en una estructura de 256 bytes como espera el sistema.

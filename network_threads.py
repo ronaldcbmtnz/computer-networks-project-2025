@@ -109,7 +109,7 @@ def receive_thread(sock, my_mac, state):
             
             # 5. Añadir lógica para manejar el ACK de archivo
             elif msg_type == MSG_TYPE_FILE_ACK:
-                # --- ESTE BLOQUE AHORA SOLO AFECTA A LA GUI ---
+                # --- ESTE BLOQUE SOLO AFECTA A LA GUI ---
                 with state['file_transfer_lock']:
                     if src_mac in state['file_transfer_state']:
                         state['file_transfer_state'][src_mac]['status'] = 'sending'
@@ -266,7 +266,6 @@ def discovery_thread(sock, my_mac):
     """
     Hilo que envía un paquete de descubrimiento en broadcast cada 10 segundos.
     """
-    # La dirección MAC de broadcast ahora se importa desde config.py
     # Prepara la cabecera y el payload del paquete de descubrimiento.
     header = struct.pack('!6s6sH', BROADCAST_MAC, my_mac, LINK_CHAT_ETHERTYPE)
     packet = header + MSG_TYPE_DISCOVERY

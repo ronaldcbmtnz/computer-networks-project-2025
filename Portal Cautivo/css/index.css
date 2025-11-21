@@ -1,10 +1,13 @@
-html, body {
+html,
+body {
     height: 100%;
     margin: 0;
     padding: 0;
 }
-body{
-    background: url('img/back.jpg') center center / cover no-repeat fixed;
+
+body {
+    /* Ruta corregida: el CSS está en /css y la imagen en /img */
+    background: url('../img/back.jpg') center center / cover no-repeat fixed;
     font-family: 'Segoe UI', Arial, sans-serif;
     position: relative;
     min-height: 100vh;
@@ -20,12 +23,15 @@ body::before {
     left: 0;
     width: 100vw;
     height: 100vh;
-    background: rgba(141, 141, 141, 0.45);
+    /* Overlay más sutil para que se aprecie la imagen de fondo */
+    background: rgba(30, 30, 30, 0.35);
     z-index: 0;
     pointer-events: none;
 }
 
-.login-container, .login-left, .login-right {
+.login-container,
+.login-left,
+.login-right {
     position: relative;
     z-index: 1;
 }
@@ -37,7 +43,7 @@ body::before {
     margin: 40px auto;
     background: rgba(255, 255, 255, 0.18);
     border-radius: 30px;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
     overflow: hidden;
     backdrop-filter: blur(10px);
 }
@@ -59,7 +65,7 @@ body::before {
     height: 100%;
     object-fit: cover;
     border-radius: 0;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
     display: block;
     z-index: 1;
 }
@@ -102,7 +108,7 @@ input[type="password"] {
     color: #23406e;
     font-size: 1rem;
     margin-bottom: 8px;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
     outline: none;
     transition: background 0.2s;
 }
@@ -127,7 +133,7 @@ button[type="submit"] {
     border-radius: 12px;
     padding: 12px 0;
     margin-top: 10px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
     cursor: pointer;
     transition: background 0.2s;
 }
@@ -149,6 +155,7 @@ button[type="submit"]:hover {
     font-weight: 600;
     transition: color 0.2s;
 }
+
 .register-link:hover {
     color: #1a2e4f;
 }
@@ -158,26 +165,33 @@ button[type="submit"]:hover {
     body {
         padding: 20px 0;
     }
+
     .login-container {
         flex-direction: column;
         width: 100%;
         margin: 20px auto;
         border-radius: 24px;
     }
-    .login-left, .login-right {
+
+    .login-left,
+    .login-right {
         width: 100%;
         min-width: 0;
     }
+
     .login-left {
         min-height: 180px;
     }
+
     .login-right {
         padding: 28px 24px 24px 24px;
     }
+
     .login-right h2 {
         font-size: 1.7rem;
         margin-bottom: 14px;
     }
+
     button[type="submit"] {
         font-size: 1.05rem;
         padding: 10px 0;
@@ -188,9 +202,13 @@ button[type="submit"]:hover {
     .login-right h2 {
         font-size: 1.5rem;
     }
-    label, input[type="text"], input[type="password"] {
+
+    label,
+    input[type="text"],
+    input[type="password"] {
         font-size: 0.9rem;
     }
+
     .register-text {
         font-size: 0.85rem;
     }

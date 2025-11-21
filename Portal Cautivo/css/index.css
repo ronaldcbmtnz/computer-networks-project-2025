@@ -1,8 +1,16 @@
+html, body {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+}
 body{
-    background: url('/img/back.jpg') no-repeat center center fixed;
-    background-size: cover;
+    background: url('img/back.jpg') center center / cover no-repeat fixed;
     font-family: 'Segoe UI', Arial, sans-serif;
     position: relative;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 body::before {
@@ -25,12 +33,12 @@ body::before {
 .login-container {
     display: flex;
     width: 600px;
-    margin: 80px auto;
-    background: #fff;
+    max-width: 95%;
+    margin: 40px auto;
+    background: rgba(255, 255, 255, 0.18);
     border-radius: 30px;
     box-shadow: 0 8px 24px rgba(0,0,0,0.18);
     overflow: hidden;
-    background: rgba(255, 255, 255, 0.18);
     backdrop-filter: blur(10px);
 }
 
@@ -38,11 +46,9 @@ body::before {
     background: linear-gradient(135deg, #0a2342 80%, #1e2a3a 100%);
     width: 40%;
     position: relative;
-    width: 40%;
     min-width: 220px;
     min-height: 350px;
     height: auto;
-    background: linear-gradient(135deg, #0a2342 80%, #1e2a3a 100%);
 }
 
 .login-img {
@@ -145,4 +151,47 @@ button[type="submit"]:hover {
 }
 .register-link:hover {
     color: #1a2e4f;
+}
+
+/* Responsive adjustments */
+@media (max-width: 720px) {
+    body {
+        padding: 20px 0;
+    }
+    .login-container {
+        flex-direction: column;
+        width: 100%;
+        margin: 20px auto;
+        border-radius: 24px;
+    }
+    .login-left, .login-right {
+        width: 100%;
+        min-width: 0;
+    }
+    .login-left {
+        min-height: 180px;
+    }
+    .login-right {
+        padding: 28px 24px 24px 24px;
+    }
+    .login-right h2 {
+        font-size: 1.7rem;
+        margin-bottom: 14px;
+    }
+    button[type="submit"] {
+        font-size: 1.05rem;
+        padding: 10px 0;
+    }
+}
+
+@media (max-width: 420px) {
+    .login-right h2 {
+        font-size: 1.5rem;
+    }
+    label, input[type="text"], input[type="password"] {
+        font-size: 0.9rem;
+    }
+    .register-text {
+        font-size: 0.85rem;
+    }
 }

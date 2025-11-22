@@ -27,8 +27,21 @@ class CaptivePortalHandler(http.server.SimpleHTTPRequestHandler):
 
     def do_GET(self):
         client_ip = self.client_address[0]
+        # Manejo de URLs de detección de portal cautivo
+        detection_paths = [
+            '/generate_204', '/ncsi.txt', '/hotspot-detect.html',
+            '/library/test/success.html', '/success.txt', '/connecttest.txt',
+            '/redirect', '/captiveportal/generate_204', '/captiveportal/test.html',
+            '/captiveportal/login.html', '/captiveportal/index.html'
+        ]
+        if self.path in detection_paths:
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html')
+            self.end_headers()
+            with open(os.path.join(WEB_DIR, 'index.html'), 'rb') as f:
+                self.wfile.write(f.read())
+            return
         # Bloquear la IP al acceder al portal (solo si no está autenticada)
-        # Para simplificar, bloqueamos siempre que acceda a '/'
         if self.path == '/':
             bloquear_ip(client_ip)
             self.path = '/index.html'

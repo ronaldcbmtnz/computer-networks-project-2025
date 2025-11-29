@@ -18,35 +18,29 @@ def bloquear_ip(ip):
     return subprocess.call(cmd_redirect)
 
 def desbloquear_ip(ip):
-    """Elimina todas las reglas de bloqueo y redirección HTTP para la IP dada."""
-    # Eliminar reglas de bloqueo en FORWARD
+    """Elimina las reglas de bloqueo y redirección, y ACEPTA el tráfico para la IP dada."""
+    # Eliminar todas las reglas REJECT para la IP
     while True:
-        result = subprocess.run(['sudo', 'iptables', '-L', 'FORWARD', '-n', '--line-numbers'], capture_output=True, text=True)
-        lines = result.stdout.splitlines()
-        num_to_delete = None
-        for line in lines:
-            if ip in line and 'REJECT' in line:
-                parts = line.split()
-                if parts:
-                    num_to_delete = parts[0]
-                    break
-        if num_to_delete:
-            subprocess.run(['sudo', 'iptables', '-D', 'FORWARD', num_to_delete], capture_output=True, text=True)
+        result = subprocess.run(['sudo', 'iptables-save'], capture_output=True, text=True)
+        rule_to_delete = next((line for line in result.stdout.splitlines() if f'-s {ip}' in line and 'REJECT' in line), None)
+        if rule_to_delete:
+            delete_cmd = rule_to_delete.replace('-A', '-D')
+            subprocess.run(f"sudo iptables {delete_cmd}", shell=True, check=True)
         else:
             break
-    # Eliminar reglas de redirección HTTP en nat PREROUTING
+
+    # Eliminar todas las reglas de REDIRECT para la IP
     while True:
-        result = subprocess.run(['sudo', 'iptables', '-t', 'nat', '-L', 'PREROUTING', '-n', '--line-numbers'], capture_output=True, text=True)
-        lines = result.stdout.splitlines()
-        num_to_delete = None
-        for line in lines:
-            if ip in line and 'tcp dpt:80' in line and 'REDIRECT' in line:
-                parts = line.split()
-                if parts:
-                    num_to_delete = parts[0]
-                    break
-        if num_to_delete:
-            subprocess.run(['sudo', 'iptables', '-t', 'nat', '-D', 'PREROUTING', num_to_delete], capture_output=True, text=True)
+        result = subprocess.run(['sudo', 'iptables-save', '-t', 'nat'], capture_output=True, text=True)
+        rule_to_delete = next((line for line in result.stdout.splitlines() if f'-s {ip}' in line and 'REDIRECT' in line), None)
+        if rule_to_delete:
+            delete_cmd = rule_to_delete.replace('-A', '-D')
+            subprocess.run(f"sudo iptables -t nat {delete_cmd}", shell=True, check=True)
         else:
             break
+
+    # Añadir una regla para PERMITIR el tráfico de la IP autenticada
+    print(f"Permitiendo tráfico para la IP: {ip}")
+    subprocess.run(['sudo', 'iptables', '-I', 'FORWARD', '1', '-s', ip, '-j', 'ACCEPT'])
+    
     return True

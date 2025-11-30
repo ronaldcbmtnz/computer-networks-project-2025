@@ -72,7 +72,8 @@ interface=wlan1_ap
 bind-interfaces
 dhcp-range=192.168.100.50,192.168.100.150,12h
 dhcp-option=3,192.168.100.1
-dhcp-option=6,8.8.8.8
+dhcp-option=6,192.168.100.1
+# dnsmasq actúa como DNS local y reenvía a servidores públicos
 server=8.8.8.8
 log-dhcp
 EOF
@@ -133,7 +134,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/Portal Cautivo"
 if [ -f "server.py" ]; then
     echo "Ejecutando server.py desde $SCRIPT_DIR/Portal Cautivo"
-    sudo python3 server.py
+    # Pasar el interfaz del portal al monitor de IPs
+    sudo CAPTIVE_IFACE=wlan1_ap python3 server.py
 else
     echo "❌ No se encuentra server.py en $SCRIPT_DIR/Portal Cautivo"
     echo "El gateway está funcionando. Para iniciar el portal web:"

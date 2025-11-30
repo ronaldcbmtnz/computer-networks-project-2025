@@ -6,11 +6,17 @@
     <title>Bienvenido - Portal Cautivo</title>
     <link rel="icon" type="image/png" href="img/favicon.png">
     <link rel="stylesheet" href="css/index.css">
+    <style>
+        /* Fondo específico para la página de bienvenida */
+        body.welcome-page {
+            background: url('img/bienvenido.png') center center / cover no-repeat fixed;
+        }
+    </style>
 </head>
-<body>
-    <div class="welcome-container">
-        <h1>¡Acceso concedido!</h1>
-        <p>Bienvenido a la red WiFi. Ahora puedes navegar libremente.</p>
-    </div>
+<body class="welcome-page">
+    <main class="welcome-container">
+        <h1 class="welcome-title">¡Conexión habilitada!</h1>
+        <p class="welcome-text">Tu inicio de sesión fue exitoso. Ya tienes acceso completo a internet desde esta red.</p>
+    </main>
 </body>
 </html>

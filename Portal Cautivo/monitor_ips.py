@@ -4,22 +4,29 @@ Monitorea las IPs conectadas a la red y las bloquea automáticamente en iptables
 """
 import time
 import subprocess
+import os
 from firewall_manager import bloquear_ip
 
 # Lista de IPs autenticadas (debe actualizarse desde el backend)
 autenticadas = set()
 
 # Intervalo de escaneo en segundos
-SCAN_INTERVAL = 10
+SCAN_INTERVAL = 2
 
 def obtener_ips_conectadas():
-    """Obtiene las IPs conectadas usando la tabla ARP."""
-    resultado = subprocess.run(['arp', '-n'], capture_output=True, text=True)
+    """Obtiene las IPs conectadas usando la tabla ARP del interfaz del portal.
+    Filtra solo la subred del portal 192.168.100.0/24 para evitar vecinos de wlo1.
+    """
+    iface = os.environ.get('CAPTIVE_IFACE')
+    cmd = ['arp', '-n'] if not iface else ['arp', '-n', '-i', iface]
+    resultado = subprocess.run(cmd, capture_output=True, text=True)
     ips = set()
     for line in resultado.stdout.splitlines():
         parts = line.split()
         if len(parts) >= 2 and parts[0].count('.') == 3:
-            ips.add(parts[0])
+            ip = parts[0]
+            if ip.startswith('192.168.100.') and ip != '192.168.100.1':
+                ips.add(ip)
     return ips
 
 def monitorear_y_bloquear():

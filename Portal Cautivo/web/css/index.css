@@ -160,6 +160,59 @@ button[type="submit"]:hover {
     color: #1a2e4f;
 }
 
+/* ---- Welcome (bienvenido.html) ---- */
+.welcome-container {
+    position: relative;
+    z-index: 1;
+    width: min(900px, 94%);
+    margin: 40px auto;
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 24px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+    padding: 28px;
+    backdrop-filter: blur(10px);
+    text-align: center;
+}
+
+.welcome-title {
+    color: #23406e;
+    font-size: 2rem;
+    margin: 8px 0 14px 0;
+}
+
+.welcome-text {
+    color: #203044;
+    font-size: 1rem;
+    margin-bottom: 18px;
+}
+
+.welcome-img {
+    width: 100%;
+    height: auto;
+    border-radius: 12px;
+    display: block;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+}
+
+.welcome-actions { margin-top: 18px; }
+
+.btn-primary {
+    background: #23406e;
+    color: #fff;
+    font-size: 1.05rem;
+    font-weight: 700;
+    border: none;
+    border-radius: 12px;
+    padding: 12px 18px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+    cursor: pointer;
+    transition: background 0.2s;
+    text-decoration: none;
+    display: inline-block;
+}
+
+.btn-primary:hover { background: #1a2e4f; }
+
 /* Responsive adjustments */
 @media (max-width: 720px) {
     body {
@@ -196,6 +249,10 @@ button[type="submit"]:hover {
         font-size: 1.05rem;
         padding: 10px 0;
     }
+
+    .welcome-container { padding: 22px; margin: 24px auto; }
+    .welcome-title { font-size: 1.7rem; }
+    .welcome-text { font-size: 0.98rem; }
 }
 
 @media (max-width: 420px) {
@@ -212,4 +269,7 @@ button[type="submit"]:hover {
     .register-text {
         font-size: 0.85rem;
     }
+
+    .welcome-title { font-size: 1.5rem; }
+    .welcome-text { font-size: 0.92rem; }
 }

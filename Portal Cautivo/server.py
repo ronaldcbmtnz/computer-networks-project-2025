@@ -9,6 +9,7 @@ import os
 import urllib.parse
 import time
 import subprocess
+import re
 from user_manager import register_user, authenticate_user
 from firewall_manager import desbloquear_ip, bloquear_ip
 from monitor_ips import obtener_ips_conectadas
@@ -16,7 +17,30 @@ from monitor_ips import obtener_ips_conectadas
 # --- Constantes y Globales ---
 WEB_DIR = os.path.join(os.path.dirname(__file__), 'web')
 PORT = 8080
-autenticadas = set()
+autenticadas = {}
+
+def get_mac_for_ip(ip: str) -> str | None:
+    """Obtiene la MAC de una IP leyendo /proc/net/arp o usando arp -n.
+    Devuelve None si no se encuentra.
+    """
+    try:
+        with open('/proc/net/arp', 'r') as f:
+            for line in f.readlines()[1:]:
+                parts = line.split()
+                if parts and parts[0] == ip:
+                    mac = parts[3]
+                    if mac and mac != '00:00:00:00:00:00':
+                        return mac.lower()
+    except Exception:
+        pass
+    try:
+        out = subprocess.run(['arp', '-n', ip], capture_output=True, text=True).stdout
+        m = re.search(r'((?:[0-9a-f]{2}:){5}[0-9a-f]{2})', out, re.I)
+        if m:
+            return m.group(1).lower()
+    except Exception:
+        pass
+    return None
 
 MIME_TYPES = {
     '.html': 'text/html',
@@ -42,7 +66,7 @@ def monitor_ips_thread():
                     bloquear_ip(ip)
         except Exception as e:
             print(f"Error en el monitor de IPs: {e}")
-        time.sleep(10)
+        time.sleep(2)
 
 # --- Manejadores de Peticiones ---
 def handle_get_request(client_socket, path, client_ip):
@@ -86,10 +110,24 @@ def handle_post_request(client_socket, path, body, client_ip):
 
     if path == '/login':
         if authenticate_user(username, password):
+            mac = get_mac_for_ip(client_ip)
             print(f"Usuario '{username}' autenticado. Desbloqueando IP {client_ip}")
-            desbloquear_ip(client_ip)
-            autenticadas.add(client_ip)
-            send_response(client_socket, 200, "OK", "Login exitoso")
+            if mac:
+                desbloquear_ip(client_ip, mac)
+                autenticadas[client_ip] = mac
+            else:
+                print(f"Advertencia: no se pudo obtener la MAC de {client_ip}. Se permite por IP.")
+                desbloquear_ip(client_ip, None)
+                autenticadas[client_ip] = None
+
+            # Mostrar página de bienvenida bonita
+            bienvenida_path = os.path.join(WEB_DIR, 'bienvenido.html')
+            if os.path.isfile(bienvenida_path):
+                with open(bienvenida_path, 'rb') as f:
+                    content = f.read()
+                send_response(client_socket, 200, "OK", content, content_type='text/html')
+            else:
+                send_response(client_socket, 200, "OK", "Login exitoso")
         else:
             print(f"Fallo de autenticación para usuario '{username}'")
             send_response(client_socket, 401, "Unauthorized", "Credenciales incorrectas")
@@ -97,23 +135,42 @@ def handle_post_request(client_socket, path, body, client_ip):
     elif path == '/register':
         if register_user(username, password):
             print(f"Usuario '{username}' registrado exitosamente.")
-            send_response(client_socket, 200, "OK", "Registro exitoso")
+            # Servir directamente index.html (mejor que 302 para algunos captives)
+            index_path = os.path.join(WEB_DIR, 'index.html')
+            if os.path.isfile(index_path):
+                with open(index_path, 'rb') as f:
+                    content = f.read()
+                send_response(client_socket, 200, "OK", content, content_type='text/html')
+            else:
+                send_response(client_socket, 200, "OK", "Registro exitoso. Ahora puedes iniciar sesión.")
         else:
             print(f"Intento de registrar usuario existente '{username}'")
             send_response(client_socket, 409, "Conflict", "Usuario ya existe")
     else:
         send_response(client_socket, 404, "Not Found", "Endpoint no encontrado.")
 
-def send_response(client_socket, status_code, status_text, body, content_type='text/plain'):
+def send_response(client_socket, status_code, status_text, body, content_type='text/plain', headers=None):
     """Envía una respuesta HTTP al cliente."""
     if isinstance(body, str):
         body = body.encode('utf-8')
-    
+    extra_headers = ''
+    if headers:
+        for k, v in headers.items():
+            extra_headers += f"{k}: {v}\r\n"
+
+    # Ensure no-cache headers by default (helps captive portals)
+    if headers is None:
+        headers = {}
+    headers.setdefault('Cache-Control', 'no-cache, no-store, must-revalidate')
+    headers.setdefault('Pragma', 'no-cache')
+    headers.setdefault('Expires', '0')
+
     response_header = (
         f"HTTP/1.1 {status_code} {status_text}\r\n"
         f"Content-Type: {content_type}\r\n"
         f"Content-Length: {len(body)}\r\n"
-        f"Connection: close\r\n\r\n"
+        f"Connection: close\r\n"
+        f"{extra_headers}\r\n"
     )
     client_socket.sendall(response_header.encode('utf-8') + body)
 
